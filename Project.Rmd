@@ -1,0 +1,361 @@
+---
+title: "Project"
+output: html_document
+date: "2023-11-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+total_data <- read.csv("fastfood.csv", header = TRUE, stringsAsFactors = TRUE)
+summary(total_data)
+str(total_data)
+head(total_data)
+tail(total_data)
+dim(total_data)
+```
+
+Detect and remove all the missing values in the dataset
+```{r}
+missing_values <- is.na(total_data)
+total_data <- na.omit(total_data)
+total_data$salad <- as.numeric(total_data$salad)
+```
+
+```{r}
+library(ggplot2)
+# Relationship between Calories and Sodium
+g_1 <- ggplot(total_data, 
+              aes(y = calories, 
+                  x = sodium)) + 
+  geom_point(color = "blue", alpha = 0.3) +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +  
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) +
+  labs(y = "Calories for Each Item", 
+       x = "Sodium for Each Item",
+       title = "Calories vs Sodium for Each Item")
+
+g_1
+
+# Relationship between Calories and Cholesterol
+g_2 <- ggplot(total_data, 
+              aes(y = calories, 
+                  x = cholesterol)) + 
+  geom_point(color = "blue", alpha = 0.3) +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +  
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) +
+  labs(y = "Calories for Each Item", 
+       x = "Cholesterol for Each Item",
+       title = "Calories vs Cholesterol for Each Item")
+
+g_2
+
+# Histogram for Calories
+hist(total_data$calories, 
+            main = "Distribution of Calories", xlab = "Calories", 
+            col = "blue", border = "black")
+
+# Average calorie for each restaurant
+library(dplyr)
+total_data_avg_calories <- total_data %>% 
+  group_by(restaurant) %>% 
+  summarise(avg_calories = mean(calories))
+barplot(total_data_avg_calories$avg_calories, 
+        names.arg = total_data_avg_calories$restaurant, 
+        main = "Average Calories by Restaurant", xlab = "Restaurant", ylab = "Average Calories", col = "orange")
+```
+
+Lasso Model:
+```{r}
+library(glmnet)
+library(Metrics)
+x_data <- as.data.frame(scale(total_data[,c(4:15)])) 
+
+head(total_data[,c(4:15)])
+
+x_vars <- model.matrix(calories~., 
+                       total_data)
+
+set.seed(123)
+lambda_seq <- 10^seq(4, -4, by = -.1)
+cv_lasso <- cv.glmnet(x = x_vars, 
+                    y = total_data$calories, 
+                    alpha = 1, 
+                    lambda = lambda_seq, 
+                    nfolds = 10)
+best_lam <- cv_lasso$lambda.1se 
+lasso_fit <- glmnet(x=x_vars,
+                    y=total_data$calories,
+                    alpha = 1,
+                    lambda = best_lam+0.04)
+
+lasso_pred <- predict(lasso_fit, s = best_lam+0.04, newx = x_vars)
+plot(total_data$calories, lasso_pred, 
+      col = 'blue', main = 'Actual vs Predicted Values with RMSE',
+      xlab = 'Actual Values', ylab = 'Predicted Values')
+rmse_lasso <- rmse(total_data$calories, lasso_pred)
+rmse_lasso
+```
+
+RandomForest:
+```{r}
+#install.packages("randomForest")
+#install.packages("caret")
+library(randomForest)
+library(caret)
+```
+
+Data Setup:
+```{r}
+set.seed(7)
+total_obs <- nrow(total_data)
+train_index <- sample(1:total_obs, 0.7*total_obs)
+train_data <- total_data[train_index,]
+test_data <- total_data[-train_index,]
+```
+
+```{r}
+summary(train_data)
+```
+
+```{r}
+rf_mod <- randomForest(calories ~ cal_fat+total_fat+sat_fat+cholesterol+sodium+
+                         total_carb+fiber+sugar+protein+vit_a+vit_c+calcium+salad, 
+                       data = train_data, 
+                       ntree = 100,
+                      nodesize = 1,
+                      mtry = 10) 
+rf_preds <- predict(rf_mod, test_data)
+
+
+library(Metrics)
+RMSE_rf <- rmse(test_data$calories, rf_preds)
+RMSE_rf
+plot(test_data$calories, rf_preds, 
+      col = 'blue', main = 'Actual vs Predicted Values with RMSE',
+      xlab = 'Actual Values', ylab = 'Predicted Values')
+```
+Variable Importance:
+```{r}
+rf_mod_importance <- randomForest(calories ~., 
+                data = train_data[,3:17],
+                mtry = 66,  
+                ntree = 200, 
+                nodesize = 200,  
+                importance = TRUE, 
+                proximity = TRUE) 
+# Extract Importance
+importance_matrix <- randomForest::importance(rf_mod_importance)
+# Print importance matrix
+importance_matrix
+
+# Plot
+varImpPlot(rf_mod_importance, type =2, n.var = 10)
+```
+
+
+XGBoost:
+
+XGBoost Setup:
+```{r}
+#install.packages("xgboost")
+#install.packages("ggplot2")
+library(devtools) 
+
+library(xgboost)
+library(caret) 
+```
+
+```{r}
+# Create training matrix
+dtrain <- xgb.DMatrix(data = as.matrix(train_data[, 4:17]), label = as.numeric(train_data$calories) -1)
+# Create test matrix
+dtest <- xgb.DMatrix(data = as.matrix(test_data[, 4:17]), label = as.numeric(test_data$calories) - 1)
+```
+
+```{r}
+set.seed(111111)
+bst_1 <- xgboost(data = dtrain, 
+               nrounds = 100, 
+               verbose = 1, 
+                print_every_n = 20) 
+```
+
+Tuning parameter
+```{r}
+set.seed(111111)
+bst <- xgb.cv(data = dtrain, 
+              nfold = 5, 
+               eta = 0.1, 
+               nrounds = 100, 
+               early_stopping_rounds = 20, 
+               verbose = 1, 
+               nthread = 1, 
+               print_every_n = 20)
+```
+
+```{r}
+set.seed(111111)
+bst_mod_1 <- xgb.cv(data = dtrain, 
+                    nfold = 5, 
+                    eta = 0.3,
+              nrounds = 1000, 
+              early_stopping_rounds = 20, 
+              verbose = 1, 
+              nthread = 1,
+              print_every_n = 20)
+```
+
+```{r}
+set.seed(111111)
+bst_mod_2 <- xgb.cv(data = dtrain, 
+                    nfold = 5, 
+                    eta = 0.1,
+              nrounds = 1000, 
+              early_stopping_rounds = 20, 
+              verbose = 1, 
+              nthread = 1,
+              print_every_n = 20)
+```
+
+```{r}
+set.seed(111111)
+bst_mod_3 <- xgb.cv(data = dtrain, 
+                    nfold = 5, 
+                    eta = 0.05,
+              nrounds = 1000, 
+              early_stopping_rounds = 20, 
+              verbose = 1, 
+              nthread = 1,
+              print_every_n = 20)
+```
+
+```{r}
+set.seed(111111)
+bst_mod_4 <- xgb.cv(data = dtrain, 
+                    nfold = 5, 
+                    eta = 0.01,
+              nrounds = 1000, 
+              early_stopping_rounds = 20, 
+              verbose = 1, 
+              nthread = 1,
+              print_every_n = 20)
+```
+
+```{r}
+set.seed(111111)
+bst_mod_5 <- xgb.cv(data = dtrain, 
+                    nfold = 5, 
+                    eta = 0.005,
+              nrounds = 1000, 
+              early_stopping_rounds = 20, 
+              verbose = 1, 
+              nthread = 1,
+              print_every_n = 20)
+```
+
+```{r}
+colnames(bst_mod_1$evaluation_log)
+
+pd1 <- cbind.data.frame(bst_mod_1$evaluation_log[,c("iter", "train_rmse_mean")], 
+                        rep(0.3, nrow(bst_mod_1$evaluation_log)))
+names(pd1)[3] <- "eta"
+
+pd2 <- cbind.data.frame(bst_mod_2$evaluation_log[,c("iter", "train_rmse_mean")], 
+                        rep(0.1, nrow(bst_mod_2$evaluation_log)))
+names(pd2)[3] <- "eta"
+
+pd3 <- cbind.data.frame(bst_mod_3$evaluation_log[,c("iter", "train_rmse_mean")], rep(0.05, nrow(bst_mod_3$evaluation_log)))
+names(pd3)[3] <- "eta"
+
+pd4 <- cbind.data.frame(bst_mod_4$evaluation_log[,c("iter", "train_rmse_mean")], rep(0.01, nrow(bst_mod_4$evaluation_log)))
+names(pd4)[3] <- "eta"
+
+pd5 <- cbind.data.frame(bst_mod_5$evaluation_log[,c("iter", "train_rmse_mean")], rep(0.005, nrow(bst_mod_5$evaluation_log)))
+names(pd5)[3] <- "eta"
+
+plot_data <- rbind.data.frame(pd1, pd2, pd3, pd4, pd5)
+
+plot_data$eta <- as.factor(plot_data$eta)
+
+g_1 <- ggplot(plot_data, aes(x = iter, y = train_rmse_mean, color = eta))+
+  geom_point(alpha = 0.5) +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.border = element_blank(), 
+        panel.background = element_blank()) + 
+  labs(x = "Number of Trees", title = "RMSE Mean v Number of Trees",
+       y = "RMSE Mean", color = "Learning \n Rate") 
+g_1
+
+g_2 <- ggplot(plot_data, aes(x = iter, y = train_rmse_mean, color = eta))+
+  geom_smooth(alpha = 0.5) +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.border = element_blank(), 
+        panel.background = element_blank()) + 
+  labs(x = "Number of Trees", title = "RMSE Mean v Number of Trees",
+       y = "RMSE Mean", color = "Learning \n Rate")  
+g_2
+```
+
+```{r}
+set.seed(111111)
+bst_final <- xgboost(data = dtrain,
+              eta = 0.3,
+              subsample =  0.9, 
+              colsample_bytree = 0.9, 
+              nrounds = 100, 
+              early_stopping_rounds = 20, 
+              verbose = 1, 
+              nthread = 1,
+              print_every_n = 20)
+```
+
+Predict the model:
+
+```{r}
+missing_values_bst <- is.na(bst_final)
+bst_final <- na.omit(bst_final)
+missing_values_bst_1 <- is.na(bst_1)
+bst_1 <- na.omit(bst_1)
+```
+
+```{r}
+boost_preds <- predict(bst_final, dtest)
+```
+
+```{r}
+#install.packages("Metrics")
+library(Metrics)
+RMSE <- rmse(test_data$calories,boost_preds)
+RMSE
+plot(test_data$calories, boost_preds, 
+      col = 'blue', main = 'Actual vs Predicted Values with RMSE',
+      xlab = 'Actual Values', ylab = 'Predicted Values')
+```
+```{r}
+imp_mat <- xgb.importance(model = bst_final)
+
+xgb.plot.importance(imp_mat, top_n = 10)
+```
+
+
